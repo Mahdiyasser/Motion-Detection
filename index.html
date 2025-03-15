@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Motion Detection with 3 Pictures in 5 Seconds</title>
+  <style>
+    body { margin: 0; background: #000; color: #fff; font-family: Arial, sans-serif; }
+    #container { position: relative; width: 100vw; height: 100vh; overflow: hidden; }
+    video, canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    #controls {
+      position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+      z-index: 2;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    button, label {
+      padding: 10px 15px;
+      font-size: 16px;
+      cursor: pointer;
+      border: none;
+      border-radius: 5px;
+      background: #333;
+      color: #fff;
+    }
+    button:hover, label:hover { background: #555; }
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 60px;
+      height: 34px;
+    }
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #ccc;
+      transition: .4s;
+      border-radius: 34px;
+    }
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 26px;
+      width: 26px;
+      left: 4px;
+      bottom: 4px;
+      background-color: white;
+      transition: .4s;
+      border-radius: 50%;
+    }
+    input:checked + .slider {
+      background-color: #2196F3;
+    }
+    input:checked + .slider:before {
+      transform: translateX(26px);
+    }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <video id="video" autoplay playsinline></video>
+    <canvas id="overlay"></canvas>
+  </div>
+  <div id="controls">
+    <button id="fullBtn">Fullscreen</button>
+    <label for="screenshotSwitch">Screenshots</label>
+    <label class="switch">
+      <input type="checkbox" id="screenshotSwitch" checked>
+      <span class="slider"></span>
+    </label>
+  </div>
+
+  <script>
+    (async function(){
+      const video = document.getElementById("video");
+      const overlay = document.getElementById("overlay");
+      const ctx = overlay.getContext("2d");
+      const fullBtn = document.getElementById("fullBtn");
+      const screenshotSwitch = document.getElementById("screenshotSwitch");
+      
+      let screenshotEnabled = screenshotSwitch.checked;
+      let lastFrame = null;
+      let lastBurstTime = 0;
+      const burstInterval = 5000; // 5 seconds between bursts
+      let inBurst = false;
+
+      async function startCamera(){
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: { exact: "environment" } }
+          });
+          video.srcObject = stream;
+          video.play();
+          return stream;
+        } catch(e) {
+          console.error(e);
+          alert("Cannot access camera. Check permissions.");
+        }
+      }
+      await startCamera();
+
+      fullBtn.addEventListener("click", () => {
+        if (!document.fullscreenElement) {
+          document.documentElement.requestFullscreen();
+        } else {
+          document.exitFullscreen();
+        }
+      });
+
+      screenshotSwitch.addEventListener("change", (e) => {
+        screenshotEnabled = e.target.checked;
+      });
+
+      function beep(duration = 100, frequency = 440, volume = 0.5) {
+        const context = new (window.AudioContext || window.webkitAudioContext)();
+        const oscillator = context.createOscillator();
+        const gainNode = context.createGain();
+        oscillator.connect(gainNode);
+        gainNode.connect(context.destination);
+        oscillator.type = "sine";
+        oscillator.frequency.value = frequency;
+        gainNode.gain.value = volume;
+        oscillator.start();
+        setTimeout(() => {
+          oscillator.stop();
+          context.close();
+        }, duration);
+      }
+
+      function captureAndSaveScreenshot() {
+        const captureCanvas = document.createElement("canvas");
+        captureCanvas.width = video.videoWidth;
+        captureCanvas.height = video.videoHeight;
+        const captureCtx = captureCanvas.getContext("2d");
+        captureCtx.drawImage(video, 0, 0, captureCanvas.width, captureCanvas.height);
+        const dataURL = captureCanvas.toDataURL("image/png");
+
+        const link = document.createElement("a");
+        link.href = dataURL;
+        link.download = "screenshot_" + Date.now() + ".png";
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+
+      function startBurst() {
+        if (!screenshotEnabled) return;
+
+        inBurst = true;
+        beep();
+        const delay = burstInterval / 3;
+        for (let i = 0; i < 3; i++) {
+          setTimeout(() => {
+            captureAndSaveScreenshot();
+            if (i === 2) {
+              inBurst = false;
+              lastBurstTime = Date.now();
+            }
+          }, delay * i);
+        }
+      }
+
+      function detectMotion() {
+        if (video.readyState < video.HAVE_ENOUGH_DATA) {
+          requestAnimationFrame(detectMotion);
+          return;
+        }
+
+        overlay.width = video.videoWidth;
+        overlay.height = video.videoHeight;
+
+        ctx.drawImage(video, 0, 0, overlay.width, overlay.height);
+        const frame = ctx.getImageData(0, 0, overlay.width, overlay.height);
+
+        if (lastFrame) {
+          ctx.clearRect(0, 0, overlay.width, overlay.height);
+          const step = 20;
+          const threshold = 100;
+          let motionDetected = false;
+
+          for (let y = 0; y < overlay.height; y += step) {
+            for (let x = 0; x < overlay.width; x += step) {
+              const index = (y * overlay.width + x) * 4;
+              const diff = Math.abs(frame.data[index] - lastFrame.data[index]) +
+                           Math.abs(frame.data[index + 1] - lastFrame.data[index + 1]) +
+                           Math.abs(frame.data[index + 2] - lastFrame.data[index + 2]);
+              if(diff > threshold){
+                ctx.strokeStyle = "red";
+                ctx.lineWidth = 2;
+                ctx.strokeRect(x, y, step, step);
+                motionDetected = true;
+              }
+            }
+          }
+
+          if(motionDetected && screenshotEnabled && !inBurst && Date.now() - lastBurstTime > burstInterval){
+            startBurst();
+          }
+        }
+        lastFrame = frame;
+        requestAnimationFrame(detectMotion);
+      }
+
+      video.addEventListener("play", detectMotion);
+    })();
+  </script>
+</body>
+</html>
